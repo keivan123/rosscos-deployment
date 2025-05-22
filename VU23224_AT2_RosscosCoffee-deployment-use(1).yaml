@@ -1,0 +1,277 @@
+AWSTemplateFormatVersion: 2010-09-09 # get from CloudFormation document page
+
+Description: Creates Rosscos' Coffee Website with a public and a private subnets. External database is not used currently. All data is hosted with web files on the web server.
+
+Metadata:
+  AWS::CloudFormation::Interface: 
+    ParameterGroups:
+      - 
+        Label: 
+          default: "VPC CIDR"
+        Parameters: 
+          - RoCoVpcCIDR
+      - 
+        Label: 
+          default: "Subnet CIDR"
+        Parameters:
+          - RoCoPublicSubnetCIDR
+          - RoCoPrivateSubnetCIDR
+      - 
+        Label: 
+          default: "SSH CIDR"
+        Parameters: 
+          - RoCoSSHIP
+      - 
+        Label: 
+          default: "HTTP CIDR"
+        Parameters: 
+          - RoCoHTTPIP
+
+Parameters:
+  RoCoVpcCIDR: # give a name to the Parameter
+    Default: 10.0.0.0/16 # can use the vpc IP here
+    Description: Enter IP range (CIDR notation) for this vpc
+    Type: String
+
+  RoCoPublicSubnetCIDR: # give a name to the Parameter
+    Default: 10.0.0.0/24 # can use the public subnet IP here
+    Description: Enter IP range (CIDR notation) for public subnet
+    Type: String
+
+  RoCoPrivateSubnetCIDR: # give a name to the Parameter
+    Default: 10.0.1.0/24 # can use the private subnet IP here
+    Description: Enter IP range (CIDR notation) for private subnet
+    Type: String
+
+  RoCoSSHIP:
+    Default: 0.0.0.0/0
+    Description: IP Address range that is permitted access to the web app EC2 instance via SSH.
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: Must provide a valid CIDR IP range (x.x.x.x/x)
+    MaxLength: '18'
+    MinLength: '9'
+    Type: String
+
+  RoCoHTTPIP:
+    Default: 0.0.0.0/0
+    Description: IP Address range that is permitted access to the web app EC2 instance via HTTP.
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: Must provide a valid CIDR IP range (x.x.x.x/x)
+    MaxLength: '18'
+    MinLength: '9'
+    Type: String
+
+
+Resources:
+  RoCoVPC: # Create VPC
+    Type: AWS::EC2::VPC
+    Properties: 
+      CidrBlock: !Ref RoCoVpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags: 
+        - Key: Name
+          Value: RoCo-VPC
+  
+  RoCoInternetGateway: # Create Internet Gateway
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: RoCoIGW
+
+  RoCoInternetGatewayAttachment: # Attach Internet Gateway to VPC, give a name to this resource
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref RoCoInternetGateway
+      VpcId: !Ref RoCoVPC
+
+  RoCoPublicSubnet: # Create Public Subnet
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref RoCoPublicSubnetCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: RoCoPublicSubnet
+      VpcId: !Ref RoCoVPC
+
+  RoCoPublicRouteTable: # Create Route Table
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: RoCoPublicRT
+      VpcId: !Ref RoCoVPC
+
+  RoCoPublicRoute: # Add a Public Route to the Route Table
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref RoCoInternetGateway
+      RouteTableId: !Ref RoCoPublicRouteTable
+
+  RoCoPublicSubnetRouteTableAssociation: # Associate Public Subnet with Public RT
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RoCoPublicRouteTable
+      SubnetId: !Ref RoCoPublicSubnet
+
+  RoCoPrivateSubnet: # Create Private Subnet
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      CidrBlock: !Ref RoCoPrivateSubnetCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: RoCoPrivateSubnet
+      VpcId: !Ref RoCoVPC
+
+  RoCoSSHSG: # Create SSH security group
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow access on ports 22
+        SecurityGroupIngress:          
+          - IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: 0.0.0.0/0
+        Tags:
+          - Key: Name
+            Value: RoCo SSH SG
+        VpcId: !Ref RoCoVPC
+
+  RoCoHTTPSG: # Create HTTP security group
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow access on ports 80
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 0.0.0.0/0          
+        Tags:
+          - Key: Name
+            Value: RoCo HTTP SG
+        VpcId: !Ref RoCoVPC
+
+  RoCoEC2KeyPair: # Create a key pair in EC2
+      Type: AWS::EC2::KeyPair
+      Properties:
+        KeyName: RosscosCoffeeKeyPair
+        Tags:
+          - Key: Project
+            Value: Rosscos-Coffee
+          - Key: Name
+            Value: !Sub rc-keypair
+
+  RoCoVPCEC2:
+      Type: AWS::EC2::Instance
+      Properties:
+        InstanceType: t2.micro
+        ImageId: ami-0889a44b331db0194
+        KeyName: !Ref RoCoEC2KeyPair
+        SubnetId: !Ref RoCoPublicSubnet
+        SecurityGroupIds: # must have a group list, single SG won't work
+          - !Ref RoCoSSHSG
+          - !Ref RoCoHTTPSG           
+        Tags:
+          - Key: Name
+            Value: RoCo-EC2-Localhost
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash -xe
+              sudo su
+              sudo dnf update -y
+              sudo dnf install -y httpd wget php-fpm php-mysqli php-json php php-devel
+              sleep 20s
+              sudo dnf install -y mariadb105-server
+              sleep 20s
+              cd /var/www/html
+              wget https://github.com/rw-tafe/coffee/archive/refs/heads/main.zip
+              unzip main.zip
+              cp -r coffee-main/* /var/www/html/
+              rm -rf coffee-main main.zip
+              sleep 20s
+              systemctl enable httpd 
+              systemctl start httpd
+              sleep 10s
+              systemctl stop httpd
+              sleep 10s
+              systemctl start httpd            
+              sudo cat >/var/www/html/model/database.php << EOE
+              <?php
+                  \$host = 'localhost';
+                  \$user = 'root';
+                  \$password = 'Password123';
+                  \$database = 'rosscoscoffee';
+                  try{
+                      \$conn = new PDO("mysql:host=\$host;dbname=\$database", \$user, \$password);
+                  }
+                  catch(PDOException \$e){
+                      \$error_message = \$e->getMessage();
+                      include('../view/database_error.php');
+                      exit();
+                  }
+              ?>
+              EOE
+              sudo systemctl start mariadb
+              sleep 10s
+              mysql --password= --user=root --host=localhost << EOF
+              create database rosscoscoffee;
+              use rosscoscoffee;
+              source rosscoscoffee.sql;
+              ALTER USER 'root'@'localhost' IDENTIFIED by 'Password123';
+              flush privileges;
+              exit;
+              EOF
+
+
+Outputs:
+  RoCoVPC: # Export VPC ID
+    Description: VPC ID
+    Export:
+      Name: !Sub ${AWS::StackName}-RoCoVPC
+    Value: !Ref RoCoVPC
+
+
+  RoCoPublicSubnet: # Export Public Subnet
+    Description: Public Subnet ID    
+    Value: !Ref RoCoPublicSubnet
+    Export:
+      Name: 
+        'Fn::Sub': '${AWS::StackName}-RoCoPublicSubnet'
+
+
+  RoCoPrivateSubnet: # Export Private Subnet
+    Description: Private Subnet ID
+    Export:
+      Name: !Sub ${AWS::StackName}-RoCoPrivateSubnet
+    Value: !Ref RoCoPrivateSubnet
+
+
+  RoCoSSHSG: # Export Security Group
+    Description: SSH Security Group ID    
+    Value: !Ref RoCoSSHSG
+    Export:
+      Name: 
+        'Fn::Sub': ${AWS::StackName}-RoCoSSHSG
+
+
+  RoCoHTTPSG: # Export Security Group
+    Description: HTTP Security Group ID    
+    Value: !Ref RoCoHTTPSG
+    Export:
+      Name: 
+        'Fn::Sub': ${AWS::StackName}-RoCoHTTPSG
+
+  RoCoPublicIP:
+    Description: Website IP address
+    Value: !Join ["://", ["http", !GetAtt RoCoVPCEC2.PublicIp]] # !GetAtt RoCoVPCEC2.PublicIp
+    Export:
+      Name: !Sub ${AWS::StackName}-RoCoPublicIP
+
